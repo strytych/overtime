@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OverTime + | 加班薪資計算</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Phosphor Icons (圖標庫) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- Google Fonts (Inter & JetBrains Mono) -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        dark: {
+                            bg: '#09090b',       // Zinc 950
+                            card: '#18181b',     // Zinc 900
+                            border: '#27272a',   // Zinc 800
+                            text: '#f4f4f5',     // Zinc 100
+                            sub: '#a1a1aa',      // Zinc 400
+                        },
+                        money: '#10b981',        // Emerald 500
+                        danger: '#ef4444',       // Red 500
+                        work: '#3b82f6',         // Blue 500 (工作中)
+                        rest: '#f59e0b',         // Amber 500 (休息中)
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #09090b;
+            color: #f4f4f5;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* 隱藏 Scrollbar 但保持滑動 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        /* 數字跳動時不抖動 */
+        .tabular-nums {
+            font-variant-numeric: tabular-nums;
+        }
+        /* 輸入框去除預設樣式 & IOS修復 */
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            filter: invert(1);
+            cursor: pointer;
+        }
+        
+        /* IOS Input Fixes */
+        input {
+            -webkit-appearance: none; /* 移除iOS預設圓角陰影 */
+            appearance: none;
+            border-radius: 1rem; /* 重新確保圓角 */
+        }
+        
+        /* 修正 iOS 上時間輸入框文字垂直位置 */
+        input[type="time"] {
+            min-height: 3.5rem;
+            line-height: normal;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col">
+
+    <div id="app" class="flex-1 flex flex-col relative max-w-md mx-auto w-full bg-dark-bg h-full shadow-2xl">
+
+        <!-- Header -->
+        <header class="p-6 flex justify-between items-center z-10">
+            <div>
+                <h1 class="text-xl font-bold tracking-tight">OverTime <span class="text-money">+</span></h1>
+                <p class="text-xs text-dark-sub">極簡加班紀錄 (月薪版)</p>
+            </div>
+            <div class="text-xs text-dark-sub border border-dark-border px-3 py-1 rounded-full bg-dark-card">
+                {{ currentDate }}
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 overflow-y-auto no-scrollbar relative p-6">
+            
+            <!-- 頁面 1: 計時器 (Timer) -->
+            <div v-if="currentTab === 'timer'" class="h-full flex flex-col justify-center">
+                
+                <!-- 狀態 A: 閒置 (輸入資料) -->
+                <div v-if="status === 'idle'" class="space-y-8 animate-fade-in">
+                    
+                    <div class="space-y-4">
+                        <!-- 上班時間輸入 (始終顯示) -->
+                        <label class="block">
+                            <span class="text-dark-sub text-sm mb-1 block">上班時間 (Start Time)</span>
+                            <input type="time" v-model="inputTime" class="appearance-none w-full bg-dark-card border border-dark-border rounded-2xl p-4 text-2xl font-mono focus:outline-none focus:border-money transition-colors text-white text-center">
+                        </label>
+
+                        <!-- 月薪輸入 (只在未設定時顯示，或者提供連結去設定) -->
+                        <div v-if="!hasMonthlyWage" class="animate-fade-in">
+                            <label class="block">
+                                <span class="text-dark-sub text-sm mb-1 block">設定月薪 (Monthly Wage)</span>
+                                <div class="relative">
+                                    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-dark-sub text-xl">$</span>
+                                    <input type="number" v-model="monthlyWage" placeholder="40000" class="appearance-none w-full bg-dark-card border border-dark-border rounded-2xl p-4 pl-10 text-2xl font-mono focus:outline-none focus:border-money transition-colors text-white text-center">
+                                </div>
+                                <p class="text-xs text-dark-sub text-center mt-2">
+                                    初次使用請輸入，日後可至「設定」修改
+                                </p>
+                            </label>
+                        </div>
+
+                        <!-- 若已設定月薪，顯示唯讀資訊 -->
+                        <div v-else class="text-center py-2" @click="currentTab = 'settings'">
+                            <p class="text-xs text-dark-sub">當前月薪設定 <span class="text-money font-mono text-sm ml-1">${{ monthlyWage }}</span></p>
+                            <p class="text-[10px] text-dark-sub/50 mt-1 cursor-pointer underline">點擊前往設定修改</p>
+                        </div>
+                    </div>
+
+                    <!-- 預估時間卡片 -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-dark-card/50 p-4 rounded-xl border border-dark-border text-center">
+                            <p class="text-dark-sub text-[10px]">預計下班 (+9hr)</p>
+                            <p class="text-lg font-bold mt-1 text-white">{{ calculatedOffWorkTime || '--:--' }}</p>
+                        </div>
+                        <div class="bg-dark-card/50 p-4 rounded-xl border border-dark-border text-center">
+                            <p class="text-dark-sub text-[10px]">加班開始 (+9.5hr)</p>
+                            <p class="text-lg font-bold mt-1 text-white">{{ calculatedOvertimeStart || '--:--' }}</p>
+                        </div>
+                    </div>
+
+                    <button @click="startWork" :disabled="!isValidInput" 
+                        class="w-full bg-white text-black font-bold py-4 rounded-full text-lg shadow-[0_0_20px_rgba(255,255,255,0.2)] active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed">
+                        開始上班
+                    </button>
+                </div>
+
+                <!-- 狀態 B: 工作中/加班中 (計時) -->
+                <div v-else class="flex flex-col items-center justify-between h-full py-8 animate-fade-in">
+                    
+                    <!-- 頂部資訊: 狀態指示燈 -->
+                    <div class="text-center space-y-1">
+                        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-dark-card border border-dark-border">
+                            <div class="w-2 h-2 rounded-full" 
+                                :class="{
+                                    'bg-work': currentPhase === 'working',
+                                    'bg-rest': currentPhase === 'resting',
+                                    'bg-money animate-pulse': currentPhase === 'overtime'
+                                }"></div>
+                            <span class="text-sm font-medium" 
+                                :class="{
+                                    'text-work': currentPhase === 'working',
+                                    'text-rest': currentPhase === 'resting',
+                                    'text-money': currentPhase === 'overtime'
+                                }">
+                                {{ statusText }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- 核心數字顯示 -->
+                    <div class="text-center relative w-full">
+                        <!-- 背景光暈 (加班時) -->
+                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-money/5 rounded-full blur-3xl pointer-events-none" v-if="currentPhase === 'overtime'"></div>
+
+                        <!-- 階段 1: 工作中 (倒數下班) -->
+                        <div v-if="currentPhase === 'working'">
+                            <!-- 已移除 "距離下班還有" 文字 -->
+                            <p class="text-5xl font-mono font-bold tracking-tight tabular-nums text-white mt-6">{{ timeToOffWork }}</p>
+                            <p class="text-dark-sub text-xs mt-4">加油！再撐一下</p>
+                        </div>
+
+                        <!-- 階段 2: 休息中 (倒數加班) -->
+                        <div v-if="currentPhase === 'resting'">
+                            <p class="text-dark-sub text-sm mb-2">距離加班開始還有</p>
+                            <p class="text-5xl font-mono font-bold tracking-tight tabular-nums text-rest">{{ timeToOvertime }}</p>
+                            <p class="text-dark-sub text-xs mt-4">休息時間 (Resting)</p>
+                        </div>
+
+                        <!-- 階段 3: 加班中 (跳錢) -->
+                        <div v-if="currentPhase === 'overtime'">
+                            <div class="text-6xl font-mono font-bold text-white tracking-tighter tabular-nums flex justify-center items-baseline gap-1 mt-6">
+                                <span class="text-2xl text-dark-sub">$</span>
+                                {{ formatMoney(currentEarnings) }}
+                            </div>
+                            <div class="mt-4 flex flex-col items-center gap-1">
+                                <span class="px-2 py-0.5 rounded text-[10px] border" 
+                                      :class="isTier2 ? 'border-money text-money' : 'border-dark-sub/30 text-dark-sub'">
+                                    {{ isTier2 ? '1.67x Rate' : '1.34x Rate' }}
+                                </span>
+                                <p class="text-dark-sub text-xs font-mono animate-pulse-slow">
+                                    +${{ currentWagePerSecond.toFixed(4) }} / sec
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 底部操作 -->
+                    <div class="w-full space-y-4">
+                        <div class="grid grid-cols-2 gap-4 text-center text-xs text-dark-sub">
+                            <div class="bg-dark-card p-3 rounded-xl border border-dark-border">
+                                <p class="mb-1 text-[10px] uppercase">預計下班</p>
+                                <p class="text-white font-mono text-base">{{ formatTime(offWorkDate) }}</p>
+                            </div>
+                            <div class="bg-dark-card p-3 rounded-xl border border-dark-border">
+                                <p class="mb-1 text-[10px] uppercase">加班開始</p>
+                                <p class="text-white font-mono text-base">{{ formatTime(overtimeDate) }}</p>
+                            </div>
+                        </div>
+
+                        <button @click="stopWork" 
+                            class="w-full bg-dark-card border border-red-900/50 text-red-500 font-bold py-4 rounded-full text-lg active:scale-95 transition-transform hover:bg-red-900/10">
+                            停止並儲存紀錄
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 頁面 2: 歷史紀錄 (History) -->
+            <div v-if="currentTab === 'history'" class="space-y-6 animate-fade-in">
+                <div class="flex justify-between items-end">
+                    <h2 class="text-2xl font-bold">加班紀錄</h2>
+                    <div class="text-right">
+                        <p class="text-xs text-dark-sub">本月累計</p>
+                        <p class="text-xl font-mono font-bold text-money">${{ totalMonthEarnings }}</p>
+                    </div>
+                </div>
+
+                <div v-if="records.length === 0" class="text-center py-20 text-dark-sub">
+                    <i class="ph ph-notebook text-4xl mb-2 opacity-50"></i>
+                    <p>尚無加班紀錄</p>
+                </div>
+
+                <div v-else class="space-y-3 pb-20">
+                    <div v-for="(record, index) in sortedRecords" :key="index" 
+                        class="bg-dark-card p-4 rounded-2xl border border-dark-border flex justify-between items-center">
+                        <div>
+                            <p class="text-white font-bold text-sm">{{ record.date }}</p>
+                            <p class="text-dark-sub text-xs mt-1">
+                                {{ record.startTime }} - {{ record.endTime }}
+                            </p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-money font-mono font-bold text-lg">+${{ record.earnings }}</p>
+                            <p class="text-dark-sub text-[10px]">月薪 ${{ record.monthlyWage }}</p>
+                        </div>
+                        <button @click="deleteRecord(index)" class="ml-3 text-dark-sub hover:text-danger p-2">
+                            <i class="ph ph-trash"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 頁面 3: 設定 (Settings) -->
+            <div v-if="currentTab === 'settings'" class="space-y-6 animate-fade-in">
+                <h2 class="text-2xl font-bold">設定</h2>
+                
+                <div class="bg-dark-card p-6 rounded-2xl border border-dark-border space-y-6">
+                    <div>
+                        <label class="block mb-2 text-sm text-dark-sub">月薪設定 (Monthly Wage)</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-dark-sub text-xl">$</span>
+                            <input type="number" v-model="monthlyWage" @input="saveSettings" placeholder="40000" class="appearance-none w-full bg-dark-bg border border-dark-border rounded-xl p-4 pl-10 text-xl font-mono focus:outline-none focus:border-money transition-colors text-white">
+                        </div>
+                        <p class="text-xs text-dark-sub mt-2">
+                            系統自動儲存。變更將影響未來的計算。
+                        </p>
+                    </div>
+
+                    <div class="pt-4 border-t border-dark-border">
+                        <p class="text-sm text-white mb-3 font-bold">試算資訊</p>
+                        <div class="space-y-2 text-sm text-dark-sub">
+                            <div class="flex justify-between">
+                                <span>時薪 (月薪/240)</span>
+                                <span class="font-mono text-white">${{ (monthlyWage / 240).toFixed(2) }}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>加班費率 (前2hr)</span>
+                                <span class="font-mono text-money">x 1.34</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>加班費率 (2hr後)</span>
+                                <span class="font-mono text-money">x 1.67</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="text-center">
+                    <button @click="currentTab = 'timer'" class="text-sm text-money font-bold py-2">
+                        回到計時頁面
+                    </button>
+                </div>
+            </div>
+
+        </main>
+
+        <!-- Bottom Navigation -->
+        <nav class="bg-dark-bg/80 backdrop-blur-md border-t border-dark-border pb-safe">
+            <div class="flex justify-around items-center h-16">
+                <button @click="currentTab = 'timer'" 
+                    class="flex flex-col items-center gap-1 w-1/3 h-full justify-center transition-colors"
+                    :class="currentTab === 'timer' ? 'text-white' : 'text-dark-sub'">
+                    <i class="ph text-2xl" :class="currentTab === 'timer' ? 'ph-timer-fill' : 'ph-timer'"></i>
+                    <span class="text-[10px] font-medium">計時</span>
+                </button>
+                <button @click="currentTab = 'history'" 
+                    class="flex flex-col items-center gap-1 w-1/3 h-full justify-center transition-colors"
+                    :class="currentTab === 'history' ? 'text-white' : 'text-dark-sub'">
+                    <i class="ph text-2xl" :class="currentTab === 'history' ? 'ph-list-dashes-fill' : 'ph-list-dashes'"></i>
+                    <span class="text-[10px] font-medium">統計</span>
+                </button>
+                <button @click="currentTab = 'settings'" 
+                    class="flex flex-col items-center gap-1 w-1/3 h-full justify-center transition-colors"
+                    :class="currentTab === 'settings' ? 'text-white' : 'text-dark-sub'">
+                    <i class="ph text-2xl" :class="currentTab === 'settings' ? 'ph-gear-fill' : 'ph-gear'"></i>
+                    <span class="text-[10px] font-medium">設定</span>
+                </button>
+            </div>
+        </nav>
+
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted, onUnmounted, watch } = Vue;
+
+        createApp({
+            setup() {
+                // --- State ---
+                const currentTab = ref('timer'); // 'timer', 'history', 'settings'
+                const status = ref('idle'); // 'idle' or 'running'
+                
+                // Input Data (Persisted)
+                const inputTime = ref(localStorage.getItem('lastInputTime') || '09:00');
+                const monthlyWage = ref(localStorage.getItem('ls_settings_wage') || '');
+                
+                // Runtime Data
+                const workStartDate = ref(null);
+                const offWorkDate = ref(null); // +9 hours
+                const overtimeDate = ref(null); // +9.5 hours
+                const now = ref(new Date());
+                const records = ref(JSON.parse(localStorage.getItem('ot_records') || '[]'));
+                
+                let timerInterval = null;
+
+                // --- Computed ---
+                
+                const hasMonthlyWage = computed(() => {
+                    return monthlyWage.value && monthlyWage.value > 0;
+                });
+
+                // 計算預計時間顯示 (UI用)
+                const getFutureTime = (hoursToAdd) => {
+                    if (!inputTime.value) return null;
+                    const [h, m] = inputTime.value.split(':').map(Number);
+                    const date = new Date();
+                    date.setHours(h, m, 0, 0);
+                    // Add hours (converted to ms)
+                    const future = new Date(date.getTime() + hoursToAdd * 60 * 60 * 1000);
+                    return future.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+                };
+
+                const calculatedOffWorkTime = computed(() => getFutureTime(9));   // +9 hours
+                const calculatedOvertimeStart = computed(() => getFutureTime(9.5)); // +9.5 hours
+
+                const isValidInput = computed(() => {
+                    return inputTime.value && hasMonthlyWage.value;
+                });
+
+                // 判斷目前階段
+                const currentPhase = computed(() => {
+                    if (!workStartDate.value) return 'idle';
+                    if (now.value < offWorkDate.value) return 'working';
+                    if (now.value < overtimeDate.value) return 'resting';
+                    return 'overtime';
+                });
+
+                const statusText = computed(() => {
+                    switch (currentPhase.value) {
+                        case 'working': return '正常工時中 (Working)';
+                        case 'resting': return '等待加班 (Resting)';
+                        case 'overtime': return '加班計費中 (Overtime)';
+                        default: return '';
+                    }
+                });
+
+                // Overtime logic helper
+                const calculateEarningsAndRate = (nowDate, otDate, mWage) => {
+                    const diffMs = nowDate - otDate;
+                    if (diffMs <= 0) return { total: 0, currentRate: 0, isTier2: false };
+
+                    const diffSec = diffMs / 1000;
+                    const twoHoursSec = 2 * 60 * 60; // 7200 sec
+
+                    const baseHourly = mWage / 240;
+                    const rate1_hourly = baseHourly * 1.34;
+                    const rate2_hourly = baseHourly * 1.67;
+                    
+                    const rate1_sec = rate1_hourly / 3600;
+                    const rate2_sec = rate2_hourly / 3600;
+
+                    let total = 0;
+                    let currentRate = rate1_sec;
+                    let isTier2 = false;
+
+                    if (diffSec <= twoHoursSec) {
+                        total = diffSec * rate1_sec;
+                        currentRate = rate1_sec;
+                        isTier2 = false;
+                    } else {
+                        total = (twoHoursSec * rate1_sec) + ((diffSec - twoHoursSec) * rate2_sec);
+                        currentRate = rate2_sec;
+                        isTier2 = true;
+                    }
+
+                    return { total, currentRate, isTier2 };
+                };
+
+                const earningsData = computed(() => {
+                    if (currentPhase.value !== 'overtime' || !monthlyWage.value) {
+                        return { total: 0, currentRate: 0, isTier2: false };
+                    }
+                    return calculateEarningsAndRate(now.value, overtimeDate.value, parseFloat(monthlyWage.value));
+                });
+
+                const currentEarnings = computed(() => earningsData.value.total);
+                const currentWagePerSecond = computed(() => earningsData.value.currentRate);
+                const isTier2 = computed(() => earningsData.value.isTier2);
+
+                // 倒數計時顯示
+                const getCountdown = (targetDate) => {
+                    if (!targetDate || now.value >= targetDate) return '00:00:00';
+                    const diffMs = targetDate - now.value;
+                    const h = Math.floor(diffMs / 3600000);
+                    const m = Math.floor((diffMs % 3600000) / 60000);
+                    const s = Math.floor((diffMs % 60000) / 1000);
+                    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                };
+
+                const timeToOffWork = computed(() => getCountdown(offWorkDate.value));
+                const timeToOvertime = computed(() => getCountdown(overtimeDate.value));
+
+                const currentDate = computed(() => {
+                    return new Date().toLocaleDateString('zh-TW', { month: 'long', day: 'numeric', weekday: 'long' });
+                });
+
+                const sortedRecords = computed(() => {
+                    return [...records.value].reverse();
+                });
+
+                const totalMonthEarnings = computed(() => {
+                    const currentMonth = new Date().getMonth();
+                    return records.value
+                        .filter(r => new Date(r.timestamp).getMonth() === currentMonth)
+                        .reduce((sum, r) => sum + parseFloat(r.earnings), 0)
+                        .toFixed(2);
+                });
+
+                // --- Methods ---
+
+                const saveSettings = () => {
+                    localStorage.setItem('ls_settings_wage', monthlyWage.value);
+                };
+
+                const startWork = () => {
+                    if (!isValidInput.value) return;
+
+                    localStorage.setItem('lastInputTime', inputTime.value);
+                    saveSettings(); // Ensure wage is saved
+
+                    const [h, m] = inputTime.value.split(':').map(Number);
+                    const start = new Date();
+                    start.setHours(h, m, 0, 0); 
+                    
+                    workStartDate.value = start;
+                    offWorkDate.value = new Date(start.getTime() + 9 * 60 * 60 * 1000); // +9 hours
+                    overtimeDate.value = new Date(start.getTime() + 9.5 * 60 * 60 * 1000); // +9.5 hours
+                    
+                    status.value = 'running';
+                    
+                    const session = {
+                        workStartDate: workStartDate.value.toISOString(),
+                        offWorkDate: offWorkDate.value.toISOString(),
+                        overtimeDate: overtimeDate.value.toISOString(),
+                        monthlyWage: monthlyWage.value, // Snapshotted at start
+                        active: true
+                    };
+                    localStorage.setItem('active_session', JSON.stringify(session));
+
+                    startTimer();
+                };
+
+                const stopWork = () => {
+                    const earned = parseFloat(currentEarnings.value.toFixed(2));
+                    
+                    if (earned > 0) {
+                        const record = {
+                            id: Date.now(),
+                            timestamp: new Date().toISOString(),
+                            date: new Date().toLocaleDateString('zh-TW'),
+                            startTime: formatTime(workStartDate.value),
+                            endTime: formatTime(now.value),
+                            monthlyWage: monthlyWage.value,
+                            wage: (monthlyWage.value / 240).toFixed(0), 
+                            earnings: earned.toFixed(2)
+                        };
+                        records.value.push(record);
+                        localStorage.setItem('ot_records', JSON.stringify(records.value));
+                    }
+
+                    status.value = 'idle';
+                    localStorage.removeItem('active_session');
+                    stopTimer();
+                    currentTab.value = 'history'; 
+                };
+
+                const startTimer = () => {
+                    stopTimer();
+                    now.value = new Date();
+                    timerInterval = setInterval(() => {
+                        now.value = new Date();
+                    }, 100);
+                };
+
+                const stopTimer = () => {
+                    if (timerInterval) clearInterval(timerInterval);
+                };
+
+                const formatTime = (date) => {
+                    if (!date) return '--:--';
+                    return new Date(date).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+                };
+
+                const formatMoney = (val) => {
+                    return val.toFixed(4);
+                };
+
+                const deleteRecord = (index) => {
+                    if(confirm('確定刪除此紀錄？')) {
+                        const realIndex = records.value.length - 1 - index;
+                        records.value.splice(realIndex, 1);
+                        localStorage.setItem('ot_records', JSON.stringify(records.value));
+                    }
+                };
+
+                // --- Lifecycle ---
+                onMounted(() => {
+                    const savedSession = localStorage.getItem('active_session');
+                    if (savedSession) {
+                        try {
+                            const session = JSON.parse(savedSession);
+                            if (session.active) {
+                                // If running, use session wage, but also update current settings input
+                                monthlyWage.value = session.monthlyWage; 
+                                workStartDate.value = new Date(session.workStartDate);
+                                offWorkDate.value = new Date(session.offWorkDate);
+                                overtimeDate.value = new Date(session.overtimeDate);
+                                status.value = 'running';
+                                startTimer();
+                            }
+                        } catch (e) {
+                            console.error("Session restore failed", e);
+                            localStorage.removeItem('active_session');
+                        }
+                    }
+                });
+
+                onUnmounted(() => {
+                    stopTimer();
+                });
+
+                return {
+                    currentTab, status, inputTime, monthlyWage, hasMonthlyWage,
+                    isValidInput, calculatedOvertimeStart, calculatedOffWorkTime,
+                    startWork, stopWork, saveSettings,
+                    currentPhase, statusText, currentEarnings, currentWagePerSecond, isTier2,
+                    timeToOffWork, timeToOvertime,
+                    workStartDate, offWorkDate, overtimeDate, now,
+                    formatTime, formatMoney,
+                    records, sortedRecords, deleteRecord,
+                    currentDate, totalMonthEarnings
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
